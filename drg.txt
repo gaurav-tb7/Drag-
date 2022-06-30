@@ -1,0 +1,591 @@
+import React, { useState } from "react";
+import { Box, Typography, Button, Input } from "@material-ui/core";
+import sparkMD5 from "spark-md5";
+import { GeneratePresignedUrl$ } from "../../APIConfig/GeneratePresignedUrl";
+import { UploadImageToS3$ } from "../../APIConfig/UploadImageToS3";
+import { UpdateImageFileMetaDataArea$ } from "../../APIConfig/UpdateImageFileMetaDataArea";
+import { getFromStore, setToStore } from "../../Stores/utils";
+import { RegeneratePresignedUrl$ } from "../../APIConfig/RegeneratePresignedUrl";
+import SelectOverlay from "../UploadFromGallery/selectOverlay";
+import ErrorMessage from "../ErrorMessage";
+
+let sizes;
+
+export default function UploadItem({
+  title,
+  img,
+  stage,
+  selected,
+  uploaded,
+  index,
+  area,
+  side,
+  ...props
+}) {
+  const [image, setImage] = useState("");
+  const [thumbnail, setThumbnail] = useState("");
+  const [errors, setErrors] = useState([]);
+  //const thumbnailRef = React.useRef();
+  //const [blob, setBlob] = React.useState(null);
+  const inputRef = React.useRef("");
+  //let carData = getFromStore("carDataForGalleryUpload");
+  const companyData = getFromStore("CompanyStore"); //useSubject(CompanyStore);
+  //const assessmentType = getFromStore("AssessmentType");
+  const assessmentData = getFromStore("AssessmentStore"); //useSubject(AssessmentStore$);
+  const geoLocation = getFromStore("GeoLocationStore");
+  const [imageState, setImageState] = React.useState("upload");
+  const [deleted, setDeleted] = useState(false);
+
+  console.log(stage);
+
+  let backgroundColorForContainer =
+    stage === "START" || companyData?.otp === "2575" ? "#626262" : "#EBEBEB";
+
+  // const fileToDataUri = (file) =>
+  //   new Promise((resolve, reject) => {
+  //     const reader = new FileReader();
+  //     reader.onload = (event) => {
+  //       resolve(event.target.result);
+  //     };
+  //     reader.readAsDataURL(file);
+  //   });
+
+  const validate = (fileName) => {
+    var dot = fileName.lastIndexOf(".") + 1;
+    var extFile = fileName.substr(dot, fileName.length).toLowerCase();
+    if (
+      extFile === "jpg" ||
+      extFile === "jpeg" ||
+      extFile === "png" ||
+      extFile === "webp"
+    ) {
+      return true;
+    } else {
+      return false;
+    }
+  };
+
+  const handleChange = async (e) => {
+    //console.log("tests", e.target.files);
+    console.log("name", e.target.value);
+    const isValid = validate(e.target.value);
+    if (!isValid) {
+      setErrors(["Only jpeg, jpg, png and webp image types are supported!"]);
+      return;
+      //return alert("Only jpeg, jpg, png and webp image types are supported!");
+    }
+    setDeleted(false);
+    if (e.target.files[0]) {
+      // fileToDataUri(e.target.files[0]).then((dataUri) => {
+      //   setBlob(dataUri);
+      //   console.log("testing", typeof dataUri);
+      // });
+      var img = new Image();
+
+      img.onload = function () {
+        sizes = {
+          width: this.width,
+          height: this.height,
+        };
+        // URL.revokeObjectURL(this.src);
+
+        console.log("onload: sizes", sizes);
+        console.log("onload: this", this);
+      };
+      const url = URL.createObjectURL(e.target.files[0]);
+      // console.log("url", url);
+      setImage(url);
+      img.src = url;
+
+      //console.log("testingblob", typeof e.target.files[0]);
+      // const response = await fetch(url);
+      // const blob = await response.blob();
+      //console.log("blob", blob);
+      //setBlob(blob);
+      //console.log(blob);
+
+      //if (url) handleUpload();
+
+      // setTimeout(() => {
+      //   handleUpload();
+      // }, 5000);
+      // setImage(url);
+    }
+    const dataUrl = await generateThumbnail(e.target.files[0], [100, 150]);
+    //console.log("thumbnail", dataUrl);
+    setThumbnail(dataUrl);
+  };
+
+  React.useEffect(() => {
+    if (image) {
+      handleUpload();
+    }
+  }, [image]);
+
+  // React.useEffect(() => {
+  //   //console.log("thumbnail---", thumbnail);
+  // }, [thumbnail]);
+
+  React.useEffect(() => {
+    //console.log("AREA_cahnges", image, getFromStore(area));
+    let obj = getFromStore(side);
+    if (obj && obj.deleted !== deleted) {
+      if (obj.deleted === true && imageState !== "upload") {
+        setDeleted(true);
+        //setImageState("upload");
+      } else {
+        setDeleted(false);
+      }
+    }
+  }, [getFromStore(side)]);
+
+  React.useEffect(() => {
+    if (deleted === true && imageState === "uploaded") {
+      setImageState("upload");
+    }
+  }, [deleted]);
+
+  function generateThumbnail(file, boundBox) {
+    if (!boundBox || boundBox.length != 2) {
+      throw "You need to give the boundBox";
+    }
+    var scaleRatio = Math.min(...boundBox) / Math.max(file.width, file.height);
+    var reader = new FileReader();
+    var canvas = document.createElement("canvas");
+    var ctx = canvas.getContext("2d");
+
+    return new Promise((resolve, reject) => {
+      reader.onload = function (event) {
+        var img = new Image();
+        img.onload = function () {
+          var scaleRatio =
+            Math.min(...boundBox) / Math.max(img.width, img.height);
+          let w = img.width * scaleRatio;
+          let h = img.height * scaleRatio;
+          canvas.width = w;
+          canvas.height = h;
+          ctx.drawImage(img, 0, 0, w, h);
+          return resolve(canvas.toDataURL(file.type));
+        };
+        img.src = event.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  const getMD5 = (blob) =>
+    new Promise((resolve, reject) => {
+      console.log("dataURL", blob);
+      const fileReader = new FileReader();
+      fileReader.onloadend = async function (file) {
+        console.log(fileReader.result);
+        const hash = btoa(sparkMD5.ArrayBuffer.hash(fileReader.result, true)); //md5(fileReader.result);
+        console.log("dataURL", hash, fileReader.result);
+        resolve([hash, fileReader.result]);
+      };
+      fileReader.readAsArrayBuffer(blob);
+    });
+
+  const handleInputClick = () => {
+    if (stage === "SELECT") {
+      props.toggleSelect(side);
+    }
+    if (stage === "UPLOAD" && imageState !== "uploading...") {
+      if (
+        imageState === "Failed" ||
+        ((imageState === "uploaded" || imageState === "upload") &&
+          deleted === true)
+      ) {
+        //inputRef.current.children[0].value = "";
+        inputRef.current.value = "";
+      }
+      inputRef.current.click();
+    }
+  };
+
+  const handleUpload = async () => {
+    //console.log("hanlde upload called ()", blob);
+    setImageState("uploading...");
+    let tags = [];
+
+    if (side !== "ODOMETER") {
+      tags.push({
+        co_ordinates: [],
+        tag_type: "DAMAGE_TYPE",
+        damage_types: ["No damage"],
+      });
+    }
+
+    switch (side) {
+      case "ODOMETER":
+        tags.push({
+          tag_type: "ODOMETER",
+          value: "",
+        });
+        break;
+      case "LICENSE":
+        tags.push({
+          tag_type: "VEHICLE_IDENTIFIER",
+          value: "BAR_CODE",
+        });
+        break;
+      case "VIN":
+        tags = [
+          {
+            tag_type: "VEHICLE_IDENTIFIER",
+            value: "VIN_DISC",
+            make: "",
+            model: "",
+            license_number: "",
+            registration_number: "",
+            engine_number: "",
+            vin_number: "",
+          },
+        ];
+        break;
+      default:
+        tags.push({
+          tag_type: "AREA",
+          value: area,
+        });
+
+        if (props.subArea) {
+          tags.push({
+            tag_type: "SUB_AREA",
+            value: props.subArea,
+          });
+        }
+    }
+
+    const response = await fetch(image);
+    const blob = await response.blob();
+    const [md5Data] = await getMD5(blob);
+
+    let url = false;
+    let imageDetails = getFromStore(side);
+    if (imageDetails) {
+      url = true;
+    }
+    //case "pre":
+    // if (carData) {
+    //   if (Object.keys(carData).includes(area)) {
+    //     url = true;
+    //   } else {
+    //     url = false;
+    //   }
+    // } else {
+    //   url = false;
+    // }
+
+    const assessment_id = assessmentData?.assessment_id;
+    const otp = companyData?.otp;
+    //const imageId = carData && carData[area]?.id;
+    const imageId = imageDetails?.id;
+
+    console.log("url-------------", url);
+    if (url) {
+      RegeneratePresignedUrl$(
+        otp,
+        assessment_id,
+        "b04d837c-3539-430e-b9ae-159dcbe1e96b",
+        "JPEG",
+        md5Data,
+        imageId
+      ).then(async (response) => {
+        let res = await response.json();
+        let id = res.id;
+        console.log("Uploading the Image to the URL ", res);
+        // getVersionPort.postMessage({ image_id: res.id });
+
+        try {
+          const imageUploaded = await UploadImageToS3$(
+            res.uploadUrl,
+            blob,
+            md5Data,
+            "image/jpeg"
+            // params
+          );
+
+          if (imageUploaded.status === 200) {
+            console.log("recieved");
+            // retakeInfo.imageId = res.id;
+            // getVersionPort.postMessage({ retakeJourneyRecieved: retakeInfo });
+            const resp = await UpdateImageFileMetaDataArea$(
+              otp,
+              assessment_id,
+              "b04d837c-3539-430e-b9ae-159dcbe1e96b",
+              res.id,
+              geoLocation,
+              {
+                height: sizes.height,
+                width: sizes.width,
+              },
+              tags,
+              true
+            );
+            if (resp.status > 200 && resp.status < 300) {
+              setImageState("uploaded");
+              updateCarData(id);
+            } else {
+              setImageState("Failed");
+            }
+          }
+        } catch (err) {
+          console.log(err);
+          setImageState("Failed");
+        }
+      });
+    } else {
+      console.log("md5Rec", md5Data);
+      GeneratePresignedUrl$(
+        otp,
+        assessment_id,
+        "b04d837c-3539-430e-b9ae-159dcbe1e96b",
+        "JPEG",
+        md5Data
+      ).then(async (response) => {
+        let res = await response.json();
+        let id = res.id;
+        console.log("Uploading the Image to the URL ", res);
+
+        try {
+          const imageUploaded = await UploadImageToS3$(
+            res.uploadUrl,
+            blob,
+            md5Data,
+            "image/jpeg"
+            // params
+          );
+          if (imageUploaded.status === 200) {
+            console.log("recieved");
+
+            // retakeInfo.imageId = res.id;
+            // getVersionPort.postMessage({
+            //   retakeJourneyRecieved: retakeInfo,
+            //   image_id: res.id,
+            // });
+
+            const resp = await UpdateImageFileMetaDataArea$(
+              otp,
+              assessment_id,
+              "b04d837c-3539-430e-b9ae-159dcbe1e96b",
+              res.id,
+              geoLocation,
+              {
+                height: sizes.height,
+                width: sizes.width,
+              },
+              tags,
+              true
+            );
+            if (resp.status > 200 && resp.status < 300) {
+              setImageState("uploaded");
+              updateCarData(id);
+            } else {
+              setImageState("Failed");
+            }
+          }
+        } catch (err) {
+          console.log(err);
+          setImageState("Failed");
+        }
+      });
+    }
+  };
+
+  const updateCarData = (id) => {
+    //props.updateCarDataLocal(area, id);
+    //console.log(id, area);
+    // if (carData && carData[area]) {
+    //   carData[area].id = id;
+    //   carData[area].deleted = false;
+    // } else {
+    //   carData = { ...carData };
+    //   carData[area] = {};
+    //   carData[area].id = id;
+    //   carData[area].deleted = false;
+    // }
+    //console.log("thumbnail", { id: id, deleted: false, thumbnail: thumbnail });
+    setToStore(side, { id: id, deleted: false, thumbnail: thumbnail });
+    //setToStore("carDataForGalleryUpload", carData);
+    props.updateStatus();
+  };
+
+  return (
+    // <Box height={"90%"} width={"95%"}>
+    <Box
+      sx={{
+        backgroundColor: backgroundColorForContainer,
+        // width: { xs: "150px", sm: "120px", md: "220px" },
+        // height: { xs: "200px", sm: "120px", md: "200px" },
+        // height: "15vh",
+        // width: "9vw",
+        height: "25vh",
+        width: "14vw",
+        border: "2px solid #F97A00;",
+        borderRadius: "8px",
+        //display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "1.3rem",
+        "&:hover": {
+          backgroundColor: backgroundColorForContainer,
+        },
+        overflow: "hidden",
+        position: "relative",
+      }}
+    >
+      {errors.length !== 0 && (
+        <ErrorMessage
+          errors={errors}
+          onClick={() => setErrors([])}
+        ></ErrorMessage>
+      )}
+      {stage === "SELECT" && props.imagesSelected.includes(side) && (
+        <SelectOverlay onClick={() => props.toggleSelect(side)} />
+      )}
+      {/* <canvas
+        ref={thumbnailRef}
+        style={{
+          display: "none",
+        }}
+      ></canvas> */}
+      <label class="custom-file-upload">
+        <input
+          ref={inputRef}
+          accept=".png, .jpg, .jpeg, .webp"
+          //multiple
+          type="file"
+          onChange={handleChange}
+          style={{ display: "none" }}
+        />
+      </label>
+      {stage !== "START" && (
+        <Box
+          component="div"
+          sx={{
+            top: 0,
+            left: "50%",
+            position: "absolute",
+            backgroundColor: "#626262",
+            textAlign: "center",
+            padding: "0.4rem",
+            borderRadius: "0px 0px 8px 8px",
+            width: "8vw",
+            height: "5vh",
+            transform: "translate(-50%,0)",
+          }}
+        >
+          <Typography
+            variant="body1"
+            style={{
+              fontSize: "0.8rem",
+              color: "white",
+              fontWeight: "300",
+              marginTop: "-4px",
+            }}
+          >
+            {imageState}
+          </Typography>
+        </Box>
+      )}
+      <Box
+        // sx={{
+        //   backgroundColor: "#626262",
+        //   width: { xs: "150px", sm: "120px", md: "220px" },
+        //   height: { xs: "200px", sm: "120px", md: "200px" },
+        //   border: "1px solid #F97A00;",
+        //   borderRadius: "8px",
+        //   display: "flex",
+        //   flexDirection: "column",
+        //   alignItems: "center",
+        //   justifyContent: "center",
+        //   padding: "1.3rem",
+        //   "&:hover": {
+        //     backgroundColor: "#626262",
+        //   },
+        // }}
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          width: "100%",
+          height: "100%",
+        }}
+        onClick={handleInputClick}
+      >
+        {image &&
+        (stage === "UPLOAD" || stage === "SELECT") &&
+        (deleted === false || imageState === "uploading...") ? (
+          <img src={image} height={"80%"} width={"100%"} objectFit="cover" />
+        ) : (
+          <Box
+            component="img"
+            src={img}
+            height={"10vh"}
+            width={"8vw"}
+            style={{
+              overflow: "hidden",
+              objectFit: "contain",
+              marginTop: "4px",
+            }}
+          />
+        )}
+
+        {/* <Box
+          component="img"
+          src={(image && image) || img}
+          height={"10vh"}
+          width={"8vw"}
+          style={{ overflow: "hidden", objectFit: "contain" }}
+        /> */}
+        {/* <Box
+          style={{
+            //  height: props.image === "License_Disc.png" ? "100%" : "100vh",
+            margin: "0 auto",
+            zIndex: 5000,
+            display: "flex",
+            alignItems: "flex-end",
+            justifyContent: "center",
+          }}
+        >
+          <img alt="overlays" src={img} style={{ height: "40%" }} />
+        </Box> */}
+        <Box
+          //   height={"2vh"}
+          width={"100%"}
+          style={{
+            //border: "1px solid black",
+            overflow: "hidden",
+            position: "absolute",
+            bottom: 0,
+            borderRadius: "0px 0px 8px 8px",
+            textAlign: "center",
+            backgroundColor: stage === "START" ? "transparent" : "#626262",
+            display: "block",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            color: "white",
+          }}
+        >
+          <Typography
+            variant="body1"
+            style={{
+              fontSize: "0.8rem",
+              color: "white",
+              fontWeight: "300",
+              paddingBottom: "2px",
+              paddingTop: "1px",
+              display: "inline",
+            }}
+          >
+            {title}
+          </Typography>
+        </Box>
+      </Box>
+    </Box>
+  );
+}
